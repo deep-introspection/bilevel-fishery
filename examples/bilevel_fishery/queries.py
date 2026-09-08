@@ -3,14 +3,39 @@ from core.reporting.query import Query
 
 ES_QUERIES = (
     Query(
-        title="ES population mean fitness",
-        legend_labels=("population mean fitness",),
+        title="Fitness over outer optimization iterations",
         x=("iter",),
-        y=("fitness_mean",),
+        y=(
+            (
+                "by_mechanism",
+                ReduceProtocol.SERIES,
+                "fitness",
+            ),
+            (
+                "by_mechanism",
+                ReduceProtocol.MEAN,
+                "fitness",
+            ),
+            ("fitness_best",),
+        ),
+        legend_labels=(
+            "Candidates",
+            "Generation mean",
+            "Generation best",
+        ),
+        plot_modes=(
+            "markers",
+            "lines+markers",
+            "lines+markers",
+        ),
+        show_group_labels=False,
+        x_label="outer optimization iteration",
+        y_label="objective fitness",
+        error="std",
+        error_path=("by_mechanism",),
     ),
     Query(
         title="Candidate fitness vs fixed quota",
-        legend_labels=("fixed quota",),
         x=(
             "by_mechanism",
             ReduceProtocol.SERIES,
@@ -23,12 +48,17 @@ ES_QUERIES = (
             ReduceProtocol.SERIES,
             "fitness",
         ),
-        y_label="fitness",
-        x_label="fixed_quota",
+        legend_labels=("Evaluated mechanisms",),
+        plot_modes=("markers",),
+        show_group_labels=False,
+        color=("iter",),
+        color_label="Outer iteration",
+        colorscale="Viridis",
+        x_label="fixed quota",
+        y_label="objective fitness",
     ),
     Query(
         title="Restoration subsidy vs fixed quota",
-        legend_labels=("fixed quota",),
         x=(
             "by_mechanism",
             ReduceProtocol.SERIES,
@@ -43,6 +73,14 @@ ES_QUERIES = (
             "fixed_quota",
             "value",
         ),
+        legend_labels=("Evaluated mechanisms",),
+        plot_modes=("markers",),
+        show_group_labels=False,
+        color=("iter",),
+        color_label="Outer iteration",
+        colorscale="Viridis",
+        x_label="restoration subsidy",
+        y_label="fixed quota",
     ),
     Query(
         title="Final train vs eval episode return",

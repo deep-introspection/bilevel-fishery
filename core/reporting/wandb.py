@@ -127,10 +127,16 @@ class WandbReporter(Reporter):
         xs: Resolved,
         yss: list[Resolved],
         error_yss: list[Resolved],
+        color_values: Resolved | None,
     ) -> go.Figure:
         fig = go.Figure()
-        colors = qualitative.Plotly
-        dashes = ("solid", "dash", "dot", "dashdot")
+        palette = qualitative.Plotly
+        dashes = (
+            "solid",
+            "dash",
+            "dot",
+            "dashdot",
+        )
         groups = list(dict.fromkeys(group for ys in yss for group in ys))
         group_dashes = {
             group: dashes[i % len(dashes)] for i, group in enumerate(groups)
@@ -140,18 +146,62 @@ class WandbReporter(Reporter):
             if query.legend_labels is not None
             else (None,) * len(query.y_paths)
         )
+        modes = (
+            query.plot_modes
+            if query.plot_modes is not None
+            else ("lines+markers",) * len(query.y_paths)
+        )
 
-        for path_index, (path, ys, errors, path_label) in enumerate(
+        if color_values is not None:
+            flattened_colors = [
+                float(value) for values in color_values.values() for value in values
+            ]
+
+            if not flattened_colors:
+                raise ValueError("Color path resolved to an empty series.")
+
+            coloraxis: dict[str, Any] = {
+                "cmin": min(flattened_colors),
+                "cmax": max(flattened_colors),
+                "colorbar": {
+                    "title": {
+                        "text": (
+                            query.color_label
+                            if query.color_label is not None
+                            else cls._path_name(query.color)
+                        )
+                    }
+                },
+            }
+
+            if query.colorscale is not None:
+                coloraxis["colorscale"] = query.colorscale
+
+            fig.update_layout(
+                coloraxis=coloraxis,
+            )
+
+        for path_index, (
+            path,
+            ys,
+            errors,
+            path_label,
+            mode,
+        ) in enumerate(
             zip(
                 query.y_paths,
                 yss,
                 error_yss,
                 labels,
+                modes,
             )
         ):
-            color = colors[path_index % len(colors)]
+            path_color = palette[path_index % len(palette)]
 
-            for group, values in ys.items():
+            for group_index, (
+                group,
+                values,
+            ) in enumerate(ys.items()):
                 if () in xs:
                     x = xs[()]
                 else:
@@ -164,7 +214,7 @@ class WandbReporter(Reporter):
 
                 label = cls._series_label(
                     path,
-                    group,
+                    group if query.show_group_labels else (),
                     label=path_label,
                 )
 
@@ -192,11 +242,11 @@ class WandbReporter(Reporter):
                             y=(upper.tolist() + lower[::-1].tolist()),
                             mode="lines",
                             fill="toself",
-                            fillcolor=color,
+                            fillcolor=path_color,
                             opacity=0.15,
                             line=dict(
                                 width=0,
-                                color=color,
+                                color=path_color,
                             ),
                             name=f"{label} ±1 std",
                             hoverinfo="skip",
@@ -205,20 +255,39 @@ class WandbReporter(Reporter):
                         )
                     )
 
+                marker: dict[str, Any] = {
+                    "color": path_color,
+                }
+
+                if color_values is not None:
+                    if () in color_values:
+                        point_colors = color_values[()]
+                    else:
+                        try:
+                            point_colors = color_values[group]
+                        except KeyError:
+                            raise ValueError(
+                                f"No color series exists for group {group}."
+                            ) from None
+
+                    marker = {
+                        "color": point_colors,
+                        "coloraxis": "coloraxis",
+                    }
+
                 fig.add_trace(
                     go.Scatter(
                         x=x,
                         y=values,
-                        mode="lines+markers",
+                        mode=mode,
                         name=label,
+                        showlegend=(query.show_group_labels or group_index == 0),
                         legendgroup=label,
                         line=dict(
-                            color=color,
+                            color=path_color,
                             dash=group_dashes[group],
                         ),
-                        marker=dict(
-                            color=color,
-                        ),
+                        marker=marker,
                     )
                 )
 
@@ -230,6 +299,7 @@ class WandbReporter(Reporter):
         x: Resolved,
         ys: list[Resolved],
         errors: list[Resolved],
+        colors: Resolved | None,
     ) -> None:
         self._init_run()
 
@@ -244,6 +314,7 @@ class WandbReporter(Reporter):
             xs=x,
             yss=ys,
             error_yss=errors,
+            color_values=colors,
         )
         x_name = (
             query.x_label if query.x_label is not None else self._path_name(query.x)
@@ -254,7 +325,12 @@ class WandbReporter(Reporter):
             title=query.title,
             xaxis_title=x_name,
             yaxis_title=y_name,
-            hovermode="x unified",
+            hovermode=(
+                "closest"
+                if query.plot_modes is not None
+                and any(mode == "markers" for mode in query.plot_modes)
+                else "x unified"
+            ),
             template="plotly_white",
             height=650,
             legend=dict(
@@ -262,17 +338,25 @@ class WandbReporter(Reporter):
                 yanchor="top",
                 y=1,
                 xanchor="left",
-                x=1.02,
+                x=(1.15 if colors is not None else 1.02),
             ),
             margin=dict(
-                r=220,
+                r=(300 if colors is not None else 220),
             ),
         )
-        fig.update_xaxes(rangeslider_visible=False)
+        fig.update_xaxes(
+            rangeslider_visible=False,
+        )
 
-        plot_name = sanitize_key(query.title)
+        plot_name = sanitize_key(
+            query.title,
+        )
 
-        self._run.log({f"plots/{plot_name}": fig})
+        self._run.log(
+            {
+                f"plots/{plot_name}": fig,
+            }
+        )
 
     def close(self) -> None:
         if self._run is not None:

@@ -4,6 +4,7 @@ from typing import Literal, Optional, TypeAlias, cast
 from core.metrics.enums import ReduceProtocol
 
 Path: TypeAlias = tuple[str | ReduceProtocol, ...]
+PlotMode: TypeAlias = Literal["lines", "markers", "lines+markers"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +17,11 @@ class Query:
     x_label: Optional[str] = None
     y_label: Optional[str] = None
     legend_labels: Optional[tuple[str, ...]] = None
+    plot_modes: Optional[tuple[PlotMode, ...]] = None
+    show_group_labels: bool = True
+    color: Optional[Path] = None
+    color_label: Optional[str] = None
+    colorscale: Optional[str] = None
     error: Literal["none", "std"] = "none"
     error_path: Optional[Path] = None
 
@@ -31,6 +37,16 @@ class Query:
         ):
             raise ValueError("legend_labels must have the same length as y paths.")
 
+        if self.plot_modes is not None and len(self.plot_modes) != len(self.y_paths):
+            raise ValueError("plot_modes must have the same length as y paths.")
+
+        if self.color is None:
+            if self.color_label is not None:
+                raise ValueError("color_label requires a color path.")
+
+            if self.colorscale is not None:
+                raise ValueError("colorscale requires a color path.")
+
         if self.error not in ("none", "std"):
             raise ValueError(f"Unsupported error statistic: {self.error!r}.")
 
@@ -43,7 +59,10 @@ class Query:
         if not self.error_path:
             raise ValueError(f"error={self.error!r} requires error_path.")
 
-        if isinstance(self.error_path[-1], ReduceProtocol):
+        if isinstance(
+            self.error_path[-1],
+            ReduceProtocol,
+        ):
             raise ValueError(
                 "error_path must point to the dynamic dimension, not its reduction operator."
             )
@@ -52,15 +71,16 @@ class Query:
 
         if not any(path[: len(target)] == target for path in self.y_paths):
             raise ValueError(
-                f"error_path {self.error_path} must be followed by ReduceProtocol.MEAN in one of "
-                "the query's y paths."
+                f"error_path {self.error_path} must be followed by ReduceProtocol.MEAN in one "
+                "of the query's y paths."
             )
 
     @property
-    def y_paths(
-        self,
-    ) -> tuple[Path, ...]:
+    def y_paths(self) -> tuple[Path, ...]:
         if self.y and isinstance(self.y[0], tuple):
-            return cast(tuple[Path, ...], self.y)
+            return cast(
+                tuple[Path, ...],
+                self.y,
+            )
 
         return (cast(Path, self.y),)

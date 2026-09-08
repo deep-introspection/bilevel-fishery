@@ -15,7 +15,7 @@ from examples.bilevel_fishery.regulated_env_shaefer import FisheryRegulatedEnv
 from examples.bilevel_fishery.regulator_env import FisheryRegulatorEnv
 from examples.bilevel_fishery.queries import (
     ES_QUERIES,
-    FISHERY_ENV_QUERIES,
+    # FISHERY_ENV_QUERIES,
     INNER_QUERIES,
 )
 
@@ -137,7 +137,7 @@ bilevel_opt_cfg: BilevelConfig = (
             horizon=100,
             disable_env_checking=False,
             schema=FisheryMetricSchema,
-            queries=FISHERY_ENV_QUERIES,
+            queries=(),
         )
         .env_runners(
             num_env_runners=0,

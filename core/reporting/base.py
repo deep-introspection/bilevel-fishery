@@ -230,22 +230,14 @@ class Reporter(ABC):
         self,
         metrics: MetricSchema,
         query: Query,
-    ) -> tuple[Resolved, list[Resolved], list[Resolved]]:
-        """Resolve a query against a populated metric schema.
+    ) -> tuple[
+        Resolved,
+        list[Resolved],
+        list[Resolved],
+        Resolved | None,
+    ]:
+        """Resolve a query against a populated metric schema."""
 
-        Args:
-            metrics: Reduced metric schema containing the values available for
-                reporting.
-            query: Query describing the metric paths to resolve.
-
-        Returns:
-            The resolved x and y values for the query.
-
-        Raises:
-            KeyError: If a requested metric path does not exist in the schema.
-        """
-
-        # Must return x and y series of same length
         x_result = self._resolve_path(
             path=query.x,
             metrics=metrics,
@@ -263,22 +255,33 @@ class Reporter(ABC):
         yss = [result.values for result in y_results]
         error_yss = [result.errors for result in y_results]
 
-        for path, ys, errors in zip(query.y_paths, yss, error_yss):
+        colors: Resolved | None = None
+
+        if query.color is not None:
+            colors = self._resolve_path(
+                path=query.color,
+                metrics=metrics,
+            ).values
+
+        for path, ys, errors in zip(
+            query.y_paths,
+            yss,
+            error_yss,
+        ):
             if set(xs) == {()}:
                 x = xs[()]
 
                 for group, y in ys.items():
                     if len(x) != len(y):
                         raise ValueError(
-                            "Query series must have equal length: "
-                            f"x={query.x} ({len(x)}), y={path}, group={group} ({len(y)})."
+                            "Query series must have equal length: x={query.x} ({len(x)}), "
+                            f"y={path}, group={group} ({len(y)})."
                         )
-
-                continue
             else:
                 if set(xs) != set(ys):
                     raise ValueError(
-                        f"Dynamic x and y groups do not match: x={set(xs)}, y={set(ys)}."
+                        "Dynamic x and y groups do not match: "
+                        f"x={set(xs)}, y={set(ys)}."
                     )
 
                 for group in xs:
@@ -299,7 +302,30 @@ class Reporter(ABC):
                         f"Error series must have the same length as y for group {group}."
                     )
 
-        return (xs, yss, error_yss)
+            if colors is not None:
+                for group, y in ys.items():
+                    if () in colors:
+                        color_values = colors[()]
+                    else:
+                        try:
+                            color_values = colors[group]
+                        except KeyError:
+                            raise ValueError(
+                                f"No color series exists for group {group}."
+                            ) from None
+
+                    if len(color_values) != len(y):
+                        raise ValueError(
+                            f"Color series must have the same length as y for group {group}: "
+                            f"color={len(color_values)}, y={len(y)}."
+                        )
+
+        return (
+            xs,
+            yss,
+            error_yss,
+            colors,
+        )
 
     @abstractmethod
     def _report(
@@ -308,6 +334,7 @@ class Reporter(ABC):
         x: Resolved,
         ys: list[Resolved],
         errors: list[Resolved],
+        colors: Resolved | None,
     ) -> None:
         """Report one resolved query using the concrete reporting backend.
 
@@ -331,9 +358,9 @@ class Reporter(ABC):
         """
 
         for query in self._queries:
-            x, ys, errors = self._resolve_query(metrics, query)
+            x, ys, errors, colors = self._resolve_query(metrics, query)
 
-            self._report(query, x, ys, errors)
+            self._report(query, x, ys, errors, colors)
 
     @abstractmethod
     def close(self) -> None:
