@@ -223,9 +223,8 @@ class FisheryRegulatedEnv(MultiAgentRegulatedEnv):
             requested_frac_norm = requested_harvest / max(
                 EPS, self.full_required_harvest
             )
-            utilities[agent_id] = delivered_harvest / max(
-                EPS, self.full_required_harvest
-            )
+            utility = delivered_harvest / max(EPS, self.full_required_harvest)
+            utilities[agent_id] = utility
 
             self.logger.push(
                 key=("by_agent", agent_id, "requested_harvest"), value=requested_harvest
@@ -235,6 +234,10 @@ class FisheryRegulatedEnv(MultiAgentRegulatedEnv):
             )
             self.logger.push(
                 key=("by_agent", agent_id, "requested_frac"), value=requested_frac_norm
+            )
+            # TODO move to base class
+            self.logger.push(
+                key=("by_agent", agent_id, "intrinsic_utility"), value=utility
             )
 
         return utilities
@@ -372,8 +375,18 @@ class FisheryRegulatedEnv(MultiAgentRegulatedEnv):
         self.logger.push(key=("fish_stock_next",), value=fish_next)
         self.logger.push(key=("fish_norm",), value=fish_norm)
         self.logger.push(
-            key=("fish_norm_next",), value=fish_next / max(self.max_fish, EPS)
+            key=("fish_norm_next_mean",), value=fish_next / max(self.max_fish, EPS)
         )
+        self.logger.push(
+            key=("fish_norm_next_min",), value=fish_next / max(self.max_fish, EPS)
+        )
+        self.logger.push(
+            key=("fish_norm_next_max",), value=fish_next / max(self.max_fish, EPS)
+        )
+        self.logger.push(
+            key=("fish_norm_next_last",), value=fish_next / max(self.max_fish, EPS)
+        )
+        
 
         # Move this to mechanism logging
         # self.logger.push(key=("by_agent", agent_id, "max_demand_frac"), value=self.mechanism.max_demand_frac)

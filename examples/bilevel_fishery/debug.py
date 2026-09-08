@@ -4,17 +4,20 @@ from gymnasium import spaces
 
 from core.adaptors.ray.schema import RaySchema
 from core.callbacks import log_and_report_episode_metrics, tag_episode_with_env_idx
-from core.metrics.enums import ReduceProtocol
 from core.optimizers.appo.config import APPOptimizerConfig
 from core.optimizers.bilevel import BilevelConfig
 from core.optimizers.es.config import ESConfig
 from core.optimizers.es.schema import ESSchema
-from core.reporting.query import Query
 from core.reporting.wandb import WandbConfig
 from examples.bilevel_fishery.mechanism_v1 import FisheryMechanismSpace
 from examples.bilevel_fishery.metric_schema import FisheryMetricSchema
 from examples.bilevel_fishery.regulated_env_shaefer import FisheryRegulatedEnv
 from examples.bilevel_fishery.regulator_env import FisheryRegulatorEnv
+from examples.bilevel_fishery.queries import (
+    ES_QUERIES,
+    FISHERY_ENV_QUERIES,
+    INNER_QUERIES,
+)
 
 ray.shutdown()
 
@@ -91,45 +94,7 @@ bilevel_opt_cfg: BilevelConfig = (
         )
         .reporting(
             schema=ESSchema,
-            queries=[
-                Query(
-                    title="",
-                    x=("iter",),
-                    y=("fitness_mean",),
-                ),
-                Query(
-                    title="",
-                    x=(
-                        "by_mechanism",
-                        ReduceProtocol.SERIES,
-                        "fitness",
-                    ),
-                    y=(
-                        "by_mechanism",
-                        ReduceProtocol.SERIES,
-                        "by_parameter",
-                        "fixed_quota",
-                        "value",
-                    ),
-                ),
-                Query(
-                    title="",
-                    x=(
-                        "by_mechanism",
-                        ReduceProtocol.SERIES,
-                        "by_parameter",
-                        "restoration_subsidy",
-                        "value",
-                    ),
-                    y=(
-                        "by_mechanism",
-                        ReduceProtocol.SERIES,
-                        "by_parameter",
-                        "fixed_quota",
-                        "value",
-                    ),
-                ),
-            ],
+            queries=ES_QUERIES,
         )
     )
     .inner(
@@ -172,26 +137,7 @@ bilevel_opt_cfg: BilevelConfig = (
             horizon=100,
             disable_env_checking=False,
             schema=FisheryMetricSchema,
-            # TODO x and y axis labels
-            # TODO eval vs training
-            queries=[
-                # TODO the reduction by agent
-                Query(
-                    title="violation signal mean over agent",
-                    x=("iter",),
-                    y=("by_agent", ReduceProtocol.MEAN, "violation_signal"),
-                ),
-                Query(
-                    title="intrinsic utility mean over agent",
-                    x=("iter",),
-                    y=("by_agent", ReduceProtocol.MEAN, "intrinsic_utility"),
-                ),
-                Query(
-                    title="Normalized Fish biomass",
-                    x=("iter",),
-                    y=("fish_norm",),
-                ),
-            ],
+            queries=FISHERY_ENV_QUERIES,
         )
         .env_runners(
             num_env_runners=0,
@@ -272,296 +218,7 @@ bilevel_opt_cfg: BilevelConfig = (
             min_sample_timesteps_per_iteration=0,
             min_train_timesteps_per_iteration=0,
             schema=RaySchema,
-            queries=(
-                Query(
-                    title="Episode return mean",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "reward_mean",
-                        ),
-                        (
-                            "eval",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "reward_mean",
-                        ),
-                    ),
-                ),
-                # TODO two ways over junction : either plot them in separete line or mean over
-                # TODO what if you wanna avergae over specific type of agent ?
-                # TODO seeding : is error bar, by_episode is mean, by_agent is mean -> for that we leave the separation int he mapping. ID should be by type strictly
-                Query(
-                    title="Violation signal mean",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "by_agent",
-                            ReduceProtocol.MEAN,
-                            "violation_signal",
-                        ),
-                        (
-                            "eval",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "by_agent",
-                            ReduceProtocol.MEAN,
-                            "violation_signal",
-                        ),
-                    ),
-                ),
-                Query(
-                    title="Mean rollout violation signal over training iter",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "by_agent",
-                            ReduceProtocol.MEAN,
-                            "intrinsic_utility",
-                        ),
-                        (
-                            "eval",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "by_agent",
-                            ReduceProtocol.MEAN,
-                            "intrinsic_utility",
-                        ),
-                    ),
-                ),
-                Query(
-                    title="Mean rollout normalized fish biomass over training iter",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "fish_norm_next_mean",
-                        ),
-                        (
-                            "eval",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "fish_norm_next_mean",
-                        ),
-                    ),
-                ),
-                Query(
-                    title="Min rollout normalized fish biomass over training iter",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "fish_norm_next_min",
-                        ),
-                        (
-                            "eval",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "fish_norm_next_min",
-                        ),
-                    ),
-                ),
-                Query(
-                    title="Max rollout normalized fish biomass over training iter",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "fish_norm_next_max",
-                        ),
-                        (
-                            "eval",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "fish_norm_next_max",
-                        ),
-                    ),
-                ),
-                Query(
-                    title="Terminal rollout normalized fish biomass over training iter",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "fish_norm_next_last",
-                        ),
-                        (
-                            "eval",
-                            "rollout",
-                            "by_mechanism",
-                            ReduceProtocol.SERIES,
-                            "by_seed",
-                            ReduceProtocol.MEAN,
-                            "by_episode",
-                            ReduceProtocol.MEAN,
-                            "fish_norm_next_last",
-                        ),
-                    ),
-                ),
-                # TODO Again seeding over policy ? error bars ?
-                Query(
-                    title="vf_loss over training iter",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "learner",
-                            "by_policy",
-                            ReduceProtocol.SERIES,
-                            "value_loss",
-                        ),
-                        (
-                            "eval",
-                            "learner",
-                            "by_policy",
-                            ReduceProtocol.SERIES,
-                            "value_loss",
-                        ),
-                    ),
-                ),
-                Query(
-                    title="vf_loss over training iter",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "learner",
-                            "by_policy",
-                            ReduceProtocol.SERIES,
-                            "total_loss",
-                        ),
-                        (
-                            "eval",
-                            "learner",
-                            "by_policy",
-                            ReduceProtocol.SERIES,
-                            "total_loss",
-                        ),
-                    ),
-                ),
-                Query(
-                    title="policy_loss over training iter",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "learner",
-                            "by_policy",
-                            ReduceProtocol.SERIES,
-                            "policy_loss",
-                        ),
-                        (
-                            "eval",
-                            "learner",
-                            "by_policy",
-                            ReduceProtocol.SERIES,
-                            "policy_loss",
-                        ),
-                    ),
-                ),
-                Query(
-                    title="entropy over training iter",
-                    x=("iter",),
-                    y=(
-                        (
-                            "train",
-                            "learner",
-                            "by_policy",
-                            ReduceProtocol.SERIES,
-                            "policy_entropy",
-                        ),
-                        (
-                            "eval",
-                            "learner",
-                            "by_policy",
-                            ReduceProtocol.SERIES,
-                            "policy_entropy",
-                        ),
-                    ),
-                ),
-            ),
+            queries=INNER_QUERIES,
             # TODO test queries agg over mechanisms (or other dynamic fields)
             # TODO test queries with y keys from reduced (env)
         )

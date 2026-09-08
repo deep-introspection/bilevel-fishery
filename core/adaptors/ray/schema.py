@@ -17,6 +17,7 @@ class PolicyLearnerSchema(MetricSchema):
         default=None,
         json_schema_extra={"reduce": ReduceProtocol.MEAN},
     )
+
     # Value, Q, advantage debugging
     total_loss: Optional[float] = Field(
         default=None, json_schema_extra={"source": "total_loss"}
@@ -56,6 +57,7 @@ class PolicyLearnerSchema(MetricSchema):
     policy_kl_coeff: Optional[float] = Field(
         default=None, json_schema_extra={"reduce": ReduceProtocol.MEAN}
     )
+
     # TODO what is total loss ?
     # TODO kl vs kl loss
     # TODO curr_kl_coeff
@@ -109,12 +111,10 @@ class PerformanceSchema(MetricSchema):
         default=None,
         json_schema_extra={"reduce": ReduceProtocol.LAST},
     )
-
     env_steps_throughput: Optional[float] = Field(
         default=None,
         json_schema_extra={"reduce": ReduceProtocol.MEAN},
     )
-
     training_iteration_s: Optional[float] = Field(
         default=None,
         json_schema_extra={"reduce": ReduceProtocol.MEAN},
@@ -131,7 +131,6 @@ class PerformanceSchema(MetricSchema):
         default=None,
         json_schema_extra={"reduce": ReduceProtocol.MEAN},
     )
-
     weights_seq_no: Optional[float] = Field(
         default=None,
         json_schema_extra={"reduce": ReduceProtocol.LAST},
@@ -153,8 +152,20 @@ class RolloutSchema(MetricSchema):
     )
 
 
-class LearnerSchema(MetricSchema):
+class SeedLearnerSchema(MetricSchema):
     by_policy: dict[PolicyID, PolicyLearnerSchema] = Field(default_factory=dict)
+
+
+class MechanismLearnerSchema(MetricSchema):
+    """Training/policy initialization seed, NOT evaluation environment seed."""
+
+    by_seed: dict[SeedID, SeedLearnerSchema] = Field(default_factory=dict)
+
+
+class LearnerSchema(MetricSchema):
+    by_mechanism: dict[MechanismID, MechanismLearnerSchema] = Field(
+        default_factory=dict
+    )
 
 
 class TrainSchema(MetricSchema):
@@ -169,8 +180,14 @@ class EvalSchema(MetricSchema):
 
 
 class RaySchema(MetricSchema):
-    train: Optional[TrainSchema] = None
-    eval: Optional[EvalSchema] = None
+    train: Optional[TrainSchema] = Field(
+        default=None,
+        json_schema_extra={"subtree_reduce": ReduceProtocol.LAST},
+    )
+    eval: Optional[EvalSchema] = Field(
+        default=None,
+        json_schema_extra={"subtree_reduce": ReduceProtocol.LAST},
+    )
 
 
 # TODO

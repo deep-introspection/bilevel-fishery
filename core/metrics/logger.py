@@ -16,18 +16,21 @@ Path: TypeAlias = tuple[str, ...]
 class Node(dict[str, "Node | Metric"]):
     schema: type[MetricSchema]
     dynamic: bool = False
+    subtree_reduce: ReduceProtocol | None = None
 
     def __init__(
         self,
         *args,
         schema: type[MetricSchema] | None = None,
         dynamic: bool = False,
+        subtree_reduce: ReduceProtocol | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
 
         self.schema = schema
         self.dynamic = dynamic
+        self.subtree_reduce = subtree_reduce
 
     def construct(self, data: dict[str, Any]):
         if self.dynamic:
@@ -92,10 +95,11 @@ class MetricLogger(ABC):
         *,
         prefix: Path = (),
         dynamic: bool = False,
+        subtree_reduce: ReduceProtocol | None = None,
     ) -> tuple[Node, dict[Path, Metric]]:
         # TODO guardrails when Metric isnt well formatted
         refs: dict[Path, Metric] = {}
-        node = Node(schema=schema, dynamic=dynamic)
+        node = Node(schema=schema, dynamic=dynamic, subtree_reduce=subtree_reduce)
 
         for field_name, field in schema.__pydantic_fields__.items():
             path = prefix + (field_name,)
@@ -108,9 +112,17 @@ class MetricLogger(ABC):
                 if len(non_none) == 1:
                     ann = non_none[0]
             extra = field.json_schema_extra or {}
+            field_protocol = extra.get("reduce")
+            field_override = extra.get("subtree_reduce")
+
+            reduce = (
+                subtree_reduce
+                if subtree_reduce is not None
+                else field_override
+            )
 
             if isinstance(ann, type) and issubclass(ann, MetricSchema):
-                child, child_ref = cls._build_from_schema(ann, prefix=path)
+                child, child_ref = cls._build_from_schema(ann, prefix=path, subtree_reduce=reduce)
                 if not node.dynamic:
                     node[field_name] = child
                     refs.update(child_ref)
@@ -127,10 +139,14 @@ class MetricLogger(ABC):
                         f"{schema.__name__}.{field_name} must be "
                         f"dict[ID, MetricSchema], got {ann!r}"
                     )
-                node[field_name] = Node(schema=value_ann, dynamic=True)
+                node[field_name] = Node(schema=value_ann, dynamic=True, subtree_reduce=reduce)
                 continue
 
-            protocol = extra.get("reduce", ReduceProtocol.MEAN)
+            protocol = (
+                subtree_reduce
+                if subtree_reduce is not None
+                else field_protocol or ReduceProtocol.MEAN
+            )
             metric = MetricFactory.create(protocol)
             if not node.dynamic:
                 node[field_name] = metric
@@ -154,6 +170,7 @@ class MetricLogger(ABC):
                 runtime_child, refs = self._build_from_schema(
                     node.schema,
                     prefix=prefix,
+                    subtree_reduce=node.subtree_reduce,
                 )
                 node[dynamic_id] = runtime_child
                 self._refs.update(refs)
@@ -230,8 +247,9 @@ class MetricLogger(ABC):
                             f"{runtime_schema.__name__} is not a subclass of "
                             f"{declared_schema.__name__} at {path}."
                         )
+                    subtree_reduce = child_node.subtree_reduce
                     child_node, refs = self._build_from_schema(
-                        runtime_schema, prefix=path
+                        runtime_schema, prefix=path, subtree_reduce=subtree_reduce,
                     )
                     node[field_name] = child_node
                     self._refs.update(refs)
@@ -273,6 +291,7 @@ class MetricLogger(ABC):
                         runtime_node, refs = self._build_from_schema(
                             runtime_schema,
                             prefix=runtime_path,
+                            subtree_reduce=child_node.subtree_reduce,
                         )
                         child_node[dynamic_id] = runtime_node
                         self._refs.update(refs)

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import uuid
+from enum import Enum
 from typing import Any, Optional
 
 import numpy as np
 import plotly.graph_objects as go
+from plotly.colors import qualitative
 
 import wandb
-from core.metrics.metric.base import PrimitiveType
-from core.reporting.base import Reporter
+from core.metrics.enums import ReduceProtocol
+from core.reporting.base import Group, Reporter, Resolved
 from core.reporting.config import ReporterConfig
-from core.reporting.query import Query
+from core.reporting.query import Path, Query
 from core.utils import sanitize_key
 
 
@@ -27,6 +29,7 @@ class WandbConfig(ReporterConfig):
         **kwargs,
     ):
         super().__init__(project=project)
+
         self.settings = {
             "x_disable_stats": x_disable_stats,
             "x_disable_meta": x_disable_meta,
@@ -91,122 +94,188 @@ class WandbReporter(Reporter):
             )
 
     @staticmethod
-    def _path_name(path: tuple[str, ...]) -> str:
-        return "/".join(path)
-
-    @staticmethod
-    def _series_label(path: tuple[str, ...]) -> str:
-        return "/".join(path)
-
-    def _raw_series_figure(
-        self,
-        query: Query,
-        x: list[PrimitiveType],
-        ys: list[list[PrimitiveType]],
-    ) -> go.Figure:
-        fig = go.Figure()
-
-        for path, values in zip(
-            query.y_paths,
-            ys,
-        ):
-            fig.add_trace(
-                go.Scatter(
-                    x=x,
-                    y=values,
-                    mode="lines+markers",
-                    name=self._series_label(path),
-                )
-            )
-
-        return fig
-
-    def _mean_figure(
-        self,
-        query: Query,
-        x: list[PrimitiveType],
-        ys: list[list[PrimitiveType]],
-    ) -> go.Figure:
-        fig = go.Figure()
-        values = np.asarray(ys, dtype=np.float64)
-
-        if values.ndim != 2:
-            raise ValueError("Mean reduction expects a 2D collection of y series.")
-
-        mean = np.mean(values, axis=0)
-
-        if query.error == "std":
-            std = np.std(values, axis=0)
-            upper = mean + std
-            lower = mean - std
-            fig.add_trace(
-                go.Scatter(
-                    x=list(x) + list(x)[::-1],
-                    y=upper.tolist() + lower[::-1].tolist(),
-                    mode="lines",
-                    fill="toself",
-                    line=dict(
-                        width=0,
-                    ),
-                    name="±1 std",
-                    hoverinfo="skip",
-                    showlegend=True,
-                )
-            )
-
-        fig.add_trace(
-            go.Scatter(
-                x=x,
-                y=mean.tolist(),
-                mode="lines+markers",
-                line=dict(
-                    width=3,
-                ),
-                marker=dict(size=4),
-                name="mean",
-            )
+    def _path_name(path: Path) -> str:
+        return "/".join(
+            str(token.value) if isinstance(token, Enum) else token
+            for token in path
+            if not isinstance(token, ReduceProtocol)
         )
+
+    @classmethod
+    def _series_label(
+        cls,
+        path: Path,
+        group: Group,
+        label: Optional[str] = None,
+    ) -> str:
+        # TODO when by_agent followed by add, then skip
+        name = label if label is not None else cls._path_name(path)
+
+        if not group:
+            return name
+
+        group_name = ", ".join(
+            f"{junction}={dynamic_id}" for junction, dynamic_id in group
+        )
+
+        return f"{name} [{group_name}]"
+
+    @classmethod
+    def _series_figure(
+        cls,
+        query: Query,
+        xs: Resolved,
+        yss: list[Resolved],
+        error_yss: list[Resolved],
+    ) -> go.Figure:
+        fig = go.Figure()
+        colors = qualitative.Plotly
+        dashes = ("solid", "dash", "dot", "dashdot")
+        groups = list(dict.fromkeys(group for ys in yss for group in ys))
+        group_dashes = {
+            group: dashes[i % len(dashes)] for i, group in enumerate(groups)
+        }
+        labels = (
+            query.legend_labels
+            if query.legend_labels is not None
+            else (None,) * len(query.y_paths)
+        )
+
+        for path_index, (path, ys, errors, path_label) in enumerate(
+            zip(
+                query.y_paths,
+                yss,
+                error_yss,
+                labels,
+            )
+        ):
+            color = colors[path_index % len(colors)]
+
+            for group, values in ys.items():
+                if () in xs:
+                    x = xs[()]
+                else:
+                    try:
+                        x = xs[group]
+                    except KeyError:
+                        raise ValueError(
+                            f"No x series exists for group {group}."
+                        ) from None
+
+                label = cls._series_label(
+                    path,
+                    group,
+                    label=path_label,
+                )
+
+                if group in errors:
+                    y = np.asarray(
+                        values,
+                        dtype=np.float64,
+                    )
+                    std = np.asarray(
+                        errors[group],
+                        dtype=np.float64,
+                    )
+
+                    if len(y) != len(std):
+                        raise ValueError(
+                            f"Error series length does not match y for {group}."
+                        )
+
+                    upper = y + std
+                    lower = y - std
+
+                    fig.add_trace(
+                        go.Scatter(
+                            x=(list(x) + list(x)[::-1]),
+                            y=(upper.tolist() + lower[::-1].tolist()),
+                            mode="lines",
+                            fill="toself",
+                            fillcolor=color,
+                            opacity=0.15,
+                            line=dict(
+                                width=0,
+                                color=color,
+                            ),
+                            name=f"{label} ±1 std",
+                            hoverinfo="skip",
+                            showlegend=False,
+                            legendgroup=label,
+                        )
+                    )
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=x,
+                        y=values,
+                        mode="lines+markers",
+                        name=label,
+                        legendgroup=label,
+                        line=dict(
+                            color=color,
+                            dash=group_dashes[group],
+                        ),
+                        marker=dict(
+                            color=color,
+                        ),
+                    )
+                )
 
         return fig
 
     def _report(
         self,
         query: Query,
-        x: list[PrimitiveType],
-        ys: list[list[PrimitiveType]],
+        x: Resolved,
+        ys: list[Resolved],
+        errors: list[Resolved],
     ) -> None:
         self._init_run()
+
         if self._run is None:
             raise RuntimeError("W&B run failed to initialize.")
-        if not ys:
+
+        if not any(ys):
             return
 
-        if query.reduce == "none":
-            fig = self._raw_series_figure(query=query, x=x, ys=ys)
-        elif query.reduce == "mean":
-            fig = self._mean_figure(query=query, x=x, y=ys)
-        else:
-            raise ValueError(f"Unknown query reduction: {query.reduce!r}")
-
-        x_name = self._path_name(query.x)
+        fig = self._series_figure(
+            query=query,
+            xs=x,
+            yss=ys,
+            error_yss=errors,
+        )
+        x_name = (
+            query.x_label if query.x_label is not None else self._path_name(query.x)
+        )
+        y_name = query.y_label if query.y_label is not None else "value"
 
         fig.update_layout(
             title=query.title,
             xaxis_title=x_name,
-            yaxis_title="value",
+            yaxis_title=y_name,
             hovermode="x unified",
             template="plotly_white",
             height=650,
             legend=dict(
-                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+                orientation="v",
+                yanchor="top",
+                y=1,
+                xanchor="left",
+                x=1.02,
+            ),
+            margin=dict(
+                r=220,
             ),
         )
-
         fig.update_xaxes(rangeslider_visible=False)
+
         plot_name = sanitize_key(query.title)
+
         self._run.log({f"plots/{plot_name}": fig})
 
     def close(self) -> None:
         if self._run is not None:
             self._run.finish()
+
             self._run = None

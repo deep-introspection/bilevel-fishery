@@ -88,7 +88,7 @@ class FisheryRegulatorEnv(RegulatorEnv):
                         np.asarray(episode_metrics.reward_mean, dtype=np.float32)
                     )
                     fish = np.atleast_1d(
-                        np.asarray(episode_metrics.fish_norm_next, dtype=np.float32)
+                        np.asarray(episode_metrics.fish_norm_next_mean, dtype=np.float32)
                     )
                     realized_harvest = np.atleast_1d(
                         np.asarray(episode_metrics.H_realized, dtype=np.float32)

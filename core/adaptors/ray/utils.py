@@ -8,11 +8,14 @@ from ray.rllib.utils.typing import ResultDict
 from core.adaptors.ray.schema import (
     LearnerSchema,
     MechanismID,
+    MechanismLearnerSchema,
     MechanismRolloutSchema,
     PerformanceSchema,
     PolicyID,
     PolicyLearnerSchema,
     RolloutSchema,
+    SeedID,
+    SeedLearnerSchema,
     SeedRolloutSchema,
 )
 from core.envs.schema import EpisodeRolloutSchema
@@ -26,11 +29,14 @@ def _get_env(result: dict) -> dict:
 def get_episode_return_mean(result: dict) -> float:
     env = _get_env(result)
     v = to_float(env.get("episode_return_mean"))
+
     if v is not None:
         return v
+
     v = to_float(result.get("episode_reward_mean")) or to_float(
         env.get("episode_reward_mean")
     )
+
     return v if v is not None else 0.0
 
 
@@ -42,18 +48,22 @@ def get_env_steps(result: dict) -> tuple[int, int]:
     steps_life = to_float(env.get("num_env_steps_sampled_lifetime")) or to_float(
         result.get("timesteps_total")
     )
+
     return int(steps_iter or 0), int(steps_life or 0)
 
 
 def get_policy_loss_if_present(result: dict) -> float:
     learner_info = (result.get("info") or {}).get("learner") or {}
     losses = []
+
     if isinstance(learner_info, dict):
         for _, policy_stats in learner_info.items():
             ls = (policy_stats or {}).get("learner_stats") or {}
             v = to_float(ls.get("policy_loss"))
+
             if v is not None:
                 losses.append(v)
+
     return float(np.mean(losses)) if losses else float("nan")
 
 
@@ -64,27 +74,46 @@ def hash_weights(weights) -> str:
         if isinstance(obj, dict):
             for key in sorted(obj):
                 update(obj[key], f"{prefix}/{key}")
-
         elif isinstance(obj, torch.Tensor):
             array = obj.detach().cpu().contiguous().numpy()
+
             h.update(prefix.encode())
             h.update(array.tobytes())
-
         elif isinstance(obj, np.ndarray):
             h.update(prefix.encode())
             h.update(np.ascontiguousarray(obj).tobytes())
-
         else:
             h.update(prefix.encode())
             h.update(repr(obj).encode())
 
     update(weights)
+
     return h.hexdigest()
+
+
+def parse_learner_id(
+    learner_id: str,
+) -> tuple[PolicyID, MechanismID, SeedID]:
+    try:
+        policy_and_mechanism, policy_seed = learner_id.rsplit("_s", 1)
+        policy_id, mechanism_id = policy_and_mechanism.rsplit("_m", 1)
+    except ValueError:
+        raise ValueError(
+            "Expected learner ID of the form "
+            f"'<policy>_m<mechanism>_s<seed>', got {learner_id!r}."
+        ) from None
+
+    return (
+        policy_id,
+        mechanism_id,
+        policy_seed,
+    )
 
 
 # TODO remove finite
 def build_episode_aggregate(results: ResultDict) -> EpisodeRolloutSchema:
     env = results.get("env_runners", {}) or {}
+
     return EpisodeRolloutSchema(
         reward_total=None,
         reward_mean=finite(env.get("episode_return_mean")),
@@ -127,6 +156,7 @@ def build_performance(results: ResultDict) -> PerformanceSchema:
         agent_steps_lifetime_sum = finite(
             sum((to_float(value) or 0.0) for value in agent_steps_lifetime.values())
         )
+
     return PerformanceSchema(
         env_steps_this_iter=finite(env.get("num_env_steps_sampled")),
         env_steps_lifetime=finite(env.get("num_env_steps_sampled_lifetime")),
@@ -144,6 +174,7 @@ def build_performance(results: ResultDict) -> PerformanceSchema:
 def build_rollout(results: ResultDict) -> RolloutSchema:
     env = results.get("env_runners", {}) or {}
     episodes = env.get("by_episode", {}) or {}
+
     by_mechanism: dict[MechanismID, MechanismRolloutSchema] = {}
 
     for episode_id, episode in episodes.items():
@@ -152,6 +183,7 @@ def build_rollout(results: ResultDict) -> RolloutSchema:
         mechanism = by_mechanism.setdefault(mechanism_id, MechanismRolloutSchema())
         seed_rollout = mechanism.by_seed.setdefault(seed, SeedRolloutSchema())
         seed_rollout.by_episode[episode_id] = episode
+
     return RolloutSchema(
         aggregate=build_episode_aggregate(results),
         by_mechanism=by_mechanism,
@@ -171,15 +203,23 @@ def build_learner(results: ResultDict) -> LearnerSchema:
     learner_queue_wait = finite(
         all_modules_stats.get("learner_thread_in_queue_wait_timer")
     )
-    by_policy: dict[PolicyID, PolicyLearnerSchema] = {}
+
+    by_mechanism: dict[MechanismID, MechanismLearnerSchema] = {}
 
     for learner_id, stats in learners.items():
+        if learner_id == "__all_modules__":
+            continue
+
+        policy_id, mechanism_id, policy_seed = parse_learner_id(learner_id)
+
         m: dict[str, Optional[float]] = {}
 
         for key, value in stats.items():
             value = finite(value)
+
             if value is None:
                 continue
+
             m[str(key)] = value
 
         # Legacy optionally unpacked this throughput dict.
@@ -189,13 +229,12 @@ def build_learner(results: ResultDict) -> LearnerSchema:
             m["module_steps_throughput_since_last_reduce"] = finite(
                 throughput.get("throughput_since_last_reduce")
             )
-
             m["module_steps_throughput_since_last_restore"] = finite(
                 throughput.get("throughput_since_last_restore")
             )
+
         entropy = m.get("entropy")
         entropy_coeff = m.get("curr_entropy_coeff")
-
         m["policy_relative_entropy"] = safe_ratio(entropy, entropy_coeff)
 
         if entropy is not None and entropy_coeff is not None:
@@ -206,10 +245,8 @@ def build_learner(results: ResultDict) -> LearnerSchema:
         lag3 = outstanding_async_reqs
         lag4 = learner_queue_wait
         parts = [value for value in (lag1, lag2, lag3, lag4) if value is not None]
-
         m["sample_staleness"] = float(sum(parts)) if parts else None
-
-        by_policy[learner_id] = PolicyLearnerSchema(
+        policy_metrics = PolicyLearnerSchema(
             batch_size=m.get("module_train_batch_size_mean"),
             total_loss=m.get("total_loss"),
             residual_variance=None,
@@ -229,4 +266,14 @@ def build_learner(results: ResultDict) -> LearnerSchema:
             ),
             gradient_noise=m.get("gradient_noise"),
         )
-    return LearnerSchema(by_policy=by_policy)
+        mechanism = by_mechanism.setdefault(
+            mechanism_id,
+            MechanismLearnerSchema(),
+        )
+        seed = mechanism.by_seed.setdefault(
+            policy_seed,
+            SeedLearnerSchema(),
+        )
+        seed.by_policy[policy_id] = policy_metrics
+
+    return LearnerSchema(by_mechanism=by_mechanism)

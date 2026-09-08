@@ -118,6 +118,7 @@ class RegulatorEnv(BaseEnv):
 
         # return reduced data to outer optimizer
         # TODO route this through world in future
+        # TODO applying nested reducers or in sequence
         reduced = self.inner.reduce_metrics()
 
         return None, reward, False, False, {"metrics": reduced}
